@@ -603,16 +603,10 @@
 
 <div class="toast" id="toast">🙏 소원이 신령님께 전해졌습니다</div>
 
-<!-- Firebase SDK -->
-<script type="module">
-  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-  import { getDatabase, ref, push, onValue, remove, get, query, orderByChild, limitToLast }
-    from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
-
-  /* ══════════════════════════════
-     🔧 Firebase 설정 — console.firebase.google.com 에서
-        프로젝트 생성 후 아래 값을 채워주세요
-  ══════════════════════════════ */
+<!-- Firebase compat SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script>
   const firebaseConfig = {
     apiKey:            "AIzaSyAV8PuA4tz7gm0B6w8-xNr2Lb08_vGla-I",
     authDomain:        "cyber-sindang.firebaseapp.com",
@@ -623,91 +617,71 @@
     appId:             "1:770496510177:web:c07f300d7f75bc01b69fa0"
   };
 
+  firebase.initializeApp(firebaseConfig);
+  const db        = firebase.database();
+  const wishesRef = db.ref('wishes');
   const MAX_WISHES = 100;
 
-  const app = initializeApp(firebaseConfig);
-  const db  = getDatabase(app);
-  const wishesRef = ref(db, 'wishes');
-
-  /* ── 소원 게시판 렌더링 ── */
-  const wishesList  = document.getElementById('wishesList');
-  const wishesEmpty = document.getElementById('wishesEmpty');
-
-  function timeStr(ts) {
-    const d = new Date(ts);
-    return (d.getMonth()+1) + '/' + d.getDate() + ' ' +
-           String(d.getHours()).padStart(2,'0') + ':' +
-           String(d.getMinutes()).padStart(2,'0');
-  }
-
-  // 실시간 리스너 — 전체 읽고 JS에서 정렬/제한
-  onValue(wishesRef, snapshot => {
+  /* ── 실시간 소원 목록 ── */
+  wishesRef.on('value', snapshot => {
     const items = [];
     snapshot.forEach(child => items.push({ key: child.key, ...child.val() }));
-    items.sort((a, b) => b.ts - a.ts); // 최신순
-    const visible = items.slice(0, MAX_WISHES);
+    items.sort((a, b) => b.ts - a.ts);
 
-    wishesList.innerHTML = '';
-    if (visible.length === 0) {
-      wishesList.innerHTML = '<p class="wishes-empty">아직 올라온 소원이 없어요</p>';
+    const list = document.getElementById('wishesList');
+    list.innerHTML = '';
+    if (items.length === 0) {
+      list.innerHTML = '<p class="wishes-empty">아직 올라온 소원이 없어요</p>';
       return;
     }
-    visible.forEach(item => {
+    items.slice(0, MAX_WISHES).forEach(item => {
       const el = document.createElement('div');
       el.className = 'wish-item';
+      const d = new Date(item.ts);
+      const t = (d.getMonth()+1)+'/'+d.getDate()+' '+
+                String(d.getHours()).padStart(2,'0')+':'+
+                String(d.getMinutes()).padStart(2,'0');
       el.innerHTML =
         '<span class="wish-item-text">🙏 ' + esc(item.text) + '</span>' +
-        '<span class="wish-item-time">'    + timeStr(item.ts) + '</span>';
-      wishesList.appendChild(el);
+        '<span class="wish-item-time">' + t + '</span>';
+      list.appendChild(el);
     });
-  }, err => console.error('Firebase 읽기 오류:', err));
-
-  /* ── 소원 저장 + 100개 초과 시 오래된 것 삭제 ── */
-  async function saveWish(text) {
-    await push(wishesRef, { text, ts: Date.now() });
-
-    // 100개 초과분 정리
-    const snap = await get(query(wishesRef, orderByChild('ts')));
-    const all  = [];
-    snap.forEach(c => all.push({ key: c.key, ts: c.val().ts }));
-    if (all.length > MAX_WISHES) {
-      all.sort((a, b) => a.ts - b.ts); // 오래된 순
-      const toDelete = all.slice(0, all.length - MAX_WISHES);
-      await Promise.all(toDelete.map(w => remove(ref(db, 'wishes/' + w.key))));
-    }
-  }
-
-  /* ── submitWish를 모듈 스코프에서 연결 ── */
-  document.getElementById('submitBtn').addEventListener('click', submitWish);
-  document.getElementById('wishInput').addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); submitWish(); }
   });
 
+  /* ── 소원 저장 ── */
+  function saveWish(text) {
+    wishesRef.push({ text: text, ts: Date.now() }).then(() => {
+      wishesRef.once('value', snap => {
+        const all = [];
+        snap.forEach(c => all.push({ key: c.key, ts: c.val().ts }));
+        if (all.length > MAX_WISHES) {
+          all.sort((a, b) => a.ts - b.ts);
+          all.slice(0, all.length - MAX_WISHES)
+            .forEach(w => db.ref('wishes/' + w.key).remove());
+        }
+      });
+    });
+  }
+
+  /* ── 소원 제출 ── */
   function submitWish() {
-    const wishInput = document.getElementById('wishInput');
-    const text = wishInput.value.trim();
+    const input = document.getElementById('wishInput');
+    const text  = input.value.trim();
     if (!text) return;
 
-    // 떠오르는 말풍선 애니메이션
     const bubble = document.createElement('div');
     bubble.className = 'wish-bubble';
     bubble.textContent = text;
-    const inputRect = wishInput.getBoundingClientRect();
-    const maxLeft   = window.innerWidth - 16 * 2 - 280;
-    bubble.style.top  = (inputRect.top - 16) + 'px';
+    const rect    = input.getBoundingClientRect();
+    const maxLeft = window.innerWidth - 32 - 280;
+    bubble.style.top  = (rect.top - 16) + 'px';
     bubble.style.left = (16 + Math.random() * Math.max(0, maxLeft)) + 'px';
     document.body.appendChild(bubble);
     setTimeout(() => bubble.remove(), 6600);
 
-    // Firebase에 저장
     saveWish(text);
-
-    wishInput.value = '';
+    input.value = '';
     showToast();
-  }
-
-  function esc(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
   function showToast() {
@@ -717,6 +691,14 @@
     window._toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
   }
 
+  function esc(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  document.getElementById('submitBtn').addEventListener('click', submitWish);
+  document.getElementById('wishInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); submitWish(); }
+  });
 </script>
 
 <script>
