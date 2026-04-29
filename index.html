@@ -625,8 +625,13 @@
   /* ── 실시간 소원 목록 ── */
   wishesRef.on('value', snapshot => {
     const items = [];
-    snapshot.forEach(child => items.push({ key: child.key, ...child.val() }));
-items.sort((a, b) => b.ts - a.ts);
+    snapshot.forEach(child => {
+      const v = child.val();
+      if (v && typeof v.text === 'string' && v.text.trim()) {
+        items.push({ key: child.key, text: v.text, ts: v.ts || 0 });
+      }
+    });
+    items.sort((a, b) => b.ts - a.ts);
 
     const list = document.getElementById('wishesList');
     list.innerHTML = '';
@@ -638,29 +643,24 @@ items.sort((a, b) => b.ts - a.ts);
       const el = document.createElement('div');
       el.className = 'wish-item';
       const d = new Date(item.ts);
-      const t = (d.getMonth()+1)+'/'+d.getDate()+' '+
-                String(d.getHours()).padStart(2,'0')+':'+
-                String(d.getMinutes()).padStart(2,'0');
+      const t = item.ts
+        ? (d.getMonth()+1)+'/'+d.getDate()+' '+
+          String(d.getHours()).padStart(2,'0')+':'+
+          String(d.getMinutes()).padStart(2,'0')
+        : '';
       el.innerHTML =
         '<span class="wish-item-text">🙏 ' + esc(item.text) + '</span>' +
         '<span class="wish-item-time">' + t + '</span>';
       list.appendChild(el);
     });
+  }, err => {
+    console.error('Firebase 읽기 오류:', err);
   });
 
   /* ── 소원 저장 ── */
   function saveWish(text) {
-    wishesRef.push({ text: text, ts: Date.now() }).then(() => {
-      wishesRef.once('value', snap => {
-        const all = [];
-        snap.forEach(c => all.push({ key: c.key, ts: c.val().ts }));
-        if (all.length > MAX_WISHES) {
-          all.sort((a, b) => a.ts - b.ts);
-          all.slice(0, all.length - MAX_WISHES)
-            .forEach(w => db.ref('wishes/' + w.key).remove());
-        }
-      });
-    });
+    wishesRef.push({ text: text, ts: Date.now() })
+      .catch(err => console.error('저장 오류:', err));
   }
 
   /* ── 소원 제출 ── */
