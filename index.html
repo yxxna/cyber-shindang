@@ -270,11 +270,73 @@
       min-height: 1em;
     }
 
-    /* ── 소원 영역 (공간 확보) ── */
-    .wishes-spacer {
-      flex: 1;
+    /* ── 소원 게시판 ── */
+    .wishes-board {
       width: 100%;
-      min-height: 60px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      padding: 0 16px;
+    }
+    .wishes-board-title {
+      font-size: 0.68rem;
+      color: var(--gold-dim);
+      letter-spacing: 2px;
+      text-align: center;
+      margin-bottom: 10px;
+    }
+    .wishes-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-height: 80px;
+      max-height: 220px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(232,184,109,0.15) transparent;
+      padding-right: 2px;
+    }
+    .wishes-list::-webkit-scrollbar { width: 3px; }
+    .wishes-list::-webkit-scrollbar-thumb {
+      background: rgba(232,184,109,0.2);
+      border-radius: 2px;
+    }
+    .wish-item {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      padding: 8px 12px;
+      background: rgba(232,184,109,0.04);
+      border: 1px solid rgba(232,184,109,0.1);
+      border-radius: 10px;
+      animation: itemIn 0.4s cubic-bezier(0.175,0.885,0.32,1.275) both;
+      flex-shrink: 0;
+    }
+    @keyframes itemIn {
+      from { opacity: 0; transform: translateY(8px) scale(0.97); }
+      to   { opacity: 1; transform: none; }
+    }
+    .wish-item-text {
+      flex: 1;
+      font-size: 0.82rem;
+      color: var(--text);
+      line-height: 1.5;
+      word-break: keep-all;
+    }
+    .wish-item-time {
+      font-size: 0.63rem;
+      color: rgba(160,120,64,0.5);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .wishes-empty {
+      text-align: center;
+      font-size: 0.72rem;
+      color: rgba(160,120,64,0.35);
+      padding: 20px 0;
+      letter-spacing: 1px;
     }
 
     /* ── 말풍선 (fixed, 전체화면) ── */
@@ -500,8 +562,13 @@
     <p class="pray-count"  id="prayCount"></p>
   </div>
 
-  <!-- 소원 공간 확보 -->
-  <div class="wishes-spacer"></div>
+  <!-- 소원 게시판 -->
+  <div class="wishes-board">
+    <p class="wishes-board-title">✦ 모든 이의 소원 ✦</p>
+    <div class="wishes-list" id="wishesList">
+      <p class="wishes-empty" id="wishesEmpty">아직 올라온 소원이 없어요</p>
+    </div>
+  </div>
 
   <!-- 입력 -->
   <div class="input-section">
@@ -522,6 +589,122 @@
 </div>
 
 <div class="toast" id="toast">🙏 소원이 신령님께 전해졌습니다</div>
+
+<!-- Firebase SDK -->
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+  import { getDatabase, ref, push, onValue, query, orderByChild, limitToLast, remove, get }
+    from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+
+  /* ══════════════════════════════
+     🔧 Firebase 설정 — console.firebase.google.com 에서
+        프로젝트 생성 후 아래 값을 채워주세요
+  ══════════════════════════════ */
+  const firebaseConfig = {
+    apiKey:            "YOUR_API_KEY",
+    authDomain:        "YOUR_PROJECT.firebaseapp.com",
+    databaseURL:       "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+    projectId:         "YOUR_PROJECT_ID",
+    storageBucket:     "YOUR_PROJECT.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId:             "YOUR_APP_ID"
+  };
+
+  const MAX_WISHES = 100;
+
+  const app = initializeApp(firebaseConfig);
+  const db  = getDatabase(app);
+  const wishesRef = ref(db, 'wishes');
+
+  /* ── 소원 게시판 렌더링 ── */
+  const wishesList  = document.getElementById('wishesList');
+  const wishesEmpty = document.getElementById('wishesEmpty');
+
+  function timeStr(ts) {
+    const d = new Date(ts);
+    return (d.getMonth()+1) + '/' + d.getDate() + ' ' +
+           String(d.getHours()).padStart(2,'0') + ':' +
+           String(d.getMinutes()).padStart(2,'0');
+  }
+
+  // 실시간 리스너 — 최신 100개만 구독
+  const q = query(wishesRef, orderByChild('ts'), limitToLast(MAX_WISHES));
+  onValue(q, snapshot => {
+    const items = [];
+    snapshot.forEach(child => items.push({ key: child.key, ...child.val() }));
+    items.sort((a, b) => b.ts - a.ts); // 최신순
+
+    wishesList.innerHTML = '';
+    if (items.length === 0) {
+      wishesList.appendChild(wishesEmpty);
+      return;
+    }
+    items.forEach(item => {
+      const el = document.createElement('div');
+      el.className = 'wish-item';
+      el.innerHTML =
+        '<span class="wish-item-text">🙏 ' + esc(item.text) + '</span>' +
+        '<span class="wish-item-time">'    + timeStr(item.ts) + '</span>';
+      wishesList.appendChild(el);
+    });
+  });
+
+  /* ── 소원 저장 + 100개 초과 시 오래된 것 삭제 ── */
+  async function saveWish(text) {
+    await push(wishesRef, { text, ts: Date.now() });
+
+    // 100개 초과분 정리
+    const snap = await get(query(wishesRef, orderByChild('ts')));
+    const all  = [];
+    snap.forEach(c => all.push({ key: c.key, ts: c.val().ts }));
+    if (all.length > MAX_WISHES) {
+      all.sort((a, b) => a.ts - b.ts); // 오래된 순
+      const toDelete = all.slice(0, all.length - MAX_WISHES);
+      await Promise.all(toDelete.map(w => remove(ref(db, 'wishes/' + w.key))));
+    }
+  }
+
+  /* ── submitWish를 모듈 스코프에서 연결 ── */
+  document.getElementById('submitBtn').addEventListener('click', submitWish);
+  document.getElementById('wishInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); submitWish(); }
+  });
+
+  function submitWish() {
+    const wishInput = document.getElementById('wishInput');
+    const text = wishInput.value.trim();
+    if (!text) return;
+
+    // 떠오르는 말풍선 애니메이션
+    const bubble = document.createElement('div');
+    bubble.className = 'wish-bubble';
+    bubble.textContent = text;
+    const inputRect = wishInput.getBoundingClientRect();
+    const maxLeft   = window.innerWidth - 16 * 2 - 280;
+    bubble.style.top  = (inputRect.top - 16) + 'px';
+    bubble.style.left = (16 + Math.random() * Math.max(0, maxLeft)) + 'px';
+    document.body.appendChild(bubble);
+    setTimeout(() => bubble.remove(), 6600);
+
+    // Firebase에 저장
+    saveWish(text);
+
+    wishInput.value = '';
+    showToast();
+  }
+
+  function esc(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function showToast() {
+    const toast = document.getElementById('toast');
+    clearTimeout(window._toastTimer);
+    toast.classList.add('show');
+    window._toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
+  }
+
+</script>
 
 <script>
   /* ── 별 생성 ── */
@@ -576,47 +759,7 @@
   handsSection.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); startPraying(); } });
   handsSection.addEventListener('keyup',   e => { if (e.key === ' ' || e.key === 'Enter') stopPraying(); });
 
-  /* ── 소원 올리기 ── */
-  const wishInput = document.getElementById('wishInput');
-  const submitBtn = document.getElementById('submitBtn');
-  const toast     = document.getElementById('toast');
-  let toastTimer  = null;
-
-  function showToast() {
-    clearTimeout(toastTimer);
-    toast.classList.add('show');
-    toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
-  }
-
-  function esc(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
-  function submitWish() {
-    const text = wishInput.value.trim();
-    if (!text) return;
-
-    const bubble = document.createElement('div');
-    bubble.className = 'wish-bubble';
-    bubble.textContent = text;
-
-    const inputRect = wishInput.getBoundingClientRect();
-    const margin    = 16;
-    const maxLeft   = window.innerWidth - margin * 2 - 280;
-    bubble.style.top  = (inputRect.top - 16) + 'px';
-    bubble.style.left = (margin + Math.random() * Math.max(0, maxLeft)) + 'px';
-
-    document.body.appendChild(bubble);
-    setTimeout(() => bubble.remove(), 6600);
-
-    wishInput.value = '';
-    showToast();
-  }
-
-  submitBtn.addEventListener('click', submitWish);
-  wishInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); submitWish(); }
-  });
+  // 소원 제출은 Firebase 모듈 스크립트에서 처리
 </script>
 </body>
 </html>
