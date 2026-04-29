@@ -626,7 +626,7 @@
   wishesRef.on('value', snapshot => {
     const items = [];
     snapshot.forEach(child => items.push({ key: child.key, ...child.val() }));
-    items.sort((a, b) => b.ts - a.ts);
+items.sort((a, b) => b.ts - a.ts);
 
     const list = document.getElementById('wishesList');
     list.innerHTML = '';
