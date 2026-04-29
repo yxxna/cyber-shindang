@@ -606,7 +606,7 @@
 <!-- Firebase SDK -->
 <script type="module">
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-  import { getDatabase, ref, push, onValue, query, orderByChild, limitToLast, remove, get }
+  import { getDatabase, ref, push, onValue, remove, get, query, orderByChild, limitToLast }
     from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 
   /* ══════════════════════════════
@@ -640,19 +640,19 @@
            String(d.getMinutes()).padStart(2,'0');
   }
 
-  // 실시간 리스너 — 최신 100개만 구독
-  const q = query(wishesRef, orderByChild('ts'), limitToLast(MAX_WISHES));
-  onValue(q, snapshot => {
+  // 실시간 리스너 — 전체 읽고 JS에서 정렬/제한
+  onValue(wishesRef, snapshot => {
     const items = [];
     snapshot.forEach(child => items.push({ key: child.key, ...child.val() }));
     items.sort((a, b) => b.ts - a.ts); // 최신순
+    const visible = items.slice(0, MAX_WISHES);
 
     wishesList.innerHTML = '';
-    if (items.length === 0) {
-      wishesList.appendChild(wishesEmpty);
+    if (visible.length === 0) {
+      wishesList.innerHTML = '<p class="wishes-empty">아직 올라온 소원이 없어요</p>';
       return;
     }
-    items.forEach(item => {
+    visible.forEach(item => {
       const el = document.createElement('div');
       el.className = 'wish-item';
       el.innerHTML =
@@ -660,7 +660,7 @@
         '<span class="wish-item-time">'    + timeStr(item.ts) + '</span>';
       wishesList.appendChild(el);
     });
-  });
+  }, err => console.error('Firebase 읽기 오류:', err));
 
   /* ── 소원 저장 + 100개 초과 시 오래된 것 삭제 ── */
   async function saveWish(text) {
